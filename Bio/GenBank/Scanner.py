@@ -32,6 +32,7 @@ import warnings
 import re
 import sys
 from collections import OrderedDict
+from parsec import *
 
 from Bio.File import as_handle
 from Bio.Seq import Seq
@@ -1268,9 +1269,42 @@ class GenBankScanner(InsdcScanner):
         #####################################
         # LOCUS line                        #
         #####################################
+
+        
+
         if line[0 : self.GENBANK_INDENT] != "LOCUS       ":
             raise ValueError("LOCUS line does not start correctly:\n" + line)
 
+        spaces = regex(r'\s*', re.MULTILINE)
+        textP = regex(r'[_\-a-zA-Z0-9]+')
+        upperP = regex(r'[A-Z]+')
+        
+        def pure(val):
+            return Parser(lambda st, ix: Value.success(ix, val)) 
+        
+        @generate
+        def locus_p():
+            yield string('LOCUS') << spaces
+            name = yield textP << spaces
+            seq_len = yield many1(digit()) << spaces << (string("bp") ^ string("aa") ^ string("rc")) << spaces
+            mol_type = yield textP << spaces
+            form_of_seq = yield (string("linear") ^ string("circular") ^ pure("linear")) << spaces
+            division = yield (upperP << spaces) ^ pure("")
+            mod_date = yield textP << spaces
+            return (name, int("".join(seq_len)), mol_type, form_of_seq, division, mod_date)
+
+        try:
+            (locus_name, seq_len, mol_type, seq_form, division, date) = locus_p.parse_strict(line)
+            consumer.locus(locus_name)
+            consumer.size(seq_len)
+            consumer.molecule_type(mol_type)
+            consumer.topology(seq_form)
+            consumer.data_file_division(division)
+            consumer.date(date)
+            return
+        except:
+            print("Parser failed, trying to analyse the locus line the old way.")
+    
         # Have to break up the locus line, and handle the different bits of it.
         # There are at least two different versions of the locus line...
         if line[29:33] in [" bp ", " aa ", " rc "] and line[55:62] == "       ":
